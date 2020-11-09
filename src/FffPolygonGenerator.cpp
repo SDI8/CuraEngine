@@ -1084,32 +1084,14 @@ void FffPolygonGenerator::processPlatformAdhesion(SliceDataStorage& storage)
     }
 }
 
-Point getClosestPoint(double Ax, double Ay, double Bx, double By, double Px, double Py)
-{
-    double APx = Px - Ax;
-    double APy = Py - Ay;
-    double ABx = Bx - Ax;
-    double ABy = By - Ay;
-    double magAB2 = ABx * ABx + ABy * ABy;
-    double ABdotAP = ABx * APx + ABy * APy;
-    double t = ABdotAP / magAB2;
-    if (t < 0)
-    {
-        return Point(Ax, Ay);
-    }
-    else if (t > 1)
-    {
-        return Point(Ax, Ay);
-    }
-    else
-    {
-        return Point(Ax + ABx * t, Ay + ABy * t);
-    }
-}
 
-Point snapPointToGrid(Point *p0, coord_t freq)
+double getAmplitudeAt(Point *p0, unsigned int layer_nr, coord_t scale )
 {
-    return Point( round(p0->X / (freq*2)) * (freq * 2), round(p0->Y / (freq*2)) * (freq * 2) );
+    const coord_t offset = scale / 2;
+    const Point closest = Point( round( (p0->X + offset) / scale) * scale, round((p0->Y + offset) / scale) * scale );
+    const double a = vSize(*p0- closest) / ((double)scale + 1.4142 );
+    return layer_nr % 2 ? a : -a;
+
 }
 
 void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
@@ -1119,10 +1101,11 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
         return;
     }
 
-    const float freq_multiplier = 4;
+    const float freq_multiplier = 2; // TODO: as parameter
 
     const coord_t amplitude = mesh.settings.get<coord_t>("skin_line_width") / 2;
     const coord_t freq = amplitude / 2 * freq_multiplier * 2;
+    const coord_t resolution = freq / 8; // TODO: as own parameter
 
     unsigned int start_layer_nr = (mesh.settings.get<EPlatformAdhesion>("adhesion_type") == EPlatformAdhesion::BRIM)? 1 : 0; // don't make fuzzy skin on first layer if there's a brim
     for (unsigned int layer_nr = start_layer_nr; layer_nr < mesh.layers.size(); layer_nr++)
@@ -1145,23 +1128,19 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
                 PolygonRef result = results.newPoly();
                 Point* p0 = &poly.back();
 
-                Point ideal = snapPointToGrid(p0, freq);
-                int64_t start_offset = layer_nr % 2 * freq + vSize( *p0 - ideal );
-                bool odd = true;
+                int64_t start_offset = 0;
                 for (Point& p1 : poly)
                 { // for each line
                     Point p0p1 = p1 - *p0;
                     int64_t p0p1_size = vSize(p0p1);
                     int64_t p0pa_dist = start_offset;
-                    for (; p0pa_dist < p0p1_size; p0pa_dist += freq)
+                    for (; p0pa_dist < p0p1_size; p0pa_dist += resolution)
                     {                       
-                        odd = !odd;
-                        int r = odd * amplitude;
                         Point perp_to_p0p1 = turn90CCW(p0p1);
-                        Point fuzz = normal(perp_to_p0p1, -r);
                         Point np = *p0 + normal(p0p1, p0pa_dist);
-                        np = snapPointToGrid(&np, freq/2);
-                        np = getClosestPoint(p0->X, p0->Y, p1.X, p1.Y, np.X, np.Y );
+                        
+                        int r =  getAmplitudeAt(&np, layer_nr, freq * 2) * amplitude;
+                        Point fuzz = normal(perp_to_p0p1, -r);
                         Point pa = np + fuzz;
                         result.add(pa);
                     }
