@@ -1084,6 +1084,33 @@ void FffPolygonGenerator::processPlatformAdhesion(SliceDataStorage& storage)
     }
 }
 
+Point getClosestPoint(double Ax, double Ay, double Bx, double By, double Px, double Py)
+{
+    double APx = Px - Ax;
+    double APy = Py - Ay;
+    double ABx = Bx - Ax;
+    double ABy = By - Ay;
+    double magAB2 = ABx * ABx + ABy * ABy;
+    double ABdotAP = ABx * APx + ABy * APy;
+    double t = ABdotAP / magAB2;
+    if (t < 0)
+    {
+        return Point(Ax, Ay);
+    }
+    else if (t > 1)
+    {
+        return Point(Ax, Ay);
+    }
+    else
+    {
+        return Point(Ax + ABx * t, Ay + ABy * t);
+    }
+}
+
+Point snapPointToGrid(Point *p0, coord_t freq)
+{
+    return Point( round(p0->X / (freq*2)) * (freq * 2), round(p0->Y / (freq*2)) * (freq * 2) );
+}
 
 void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
 {
@@ -1091,10 +1118,12 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
     {
         return;
     }
-    const coord_t fuzziness = mesh.settings.get<coord_t>("magic_fuzzy_skin_thickness");
-    const coord_t avg_dist_between_points = mesh.settings.get<coord_t>("magic_fuzzy_skin_point_dist");
-    const coord_t min_dist_between_points = avg_dist_between_points * 3 / 4; // hardcoded: the point distance may vary between 3/4 and 5/4 the supplied value
-    const coord_t range_random_point_dist = avg_dist_between_points / 2;
+
+    const float freq_multiplier = 4;
+
+    const coord_t amplitude = mesh.settings.get<coord_t>("skin_line_width") / 2;
+    const coord_t freq = amplitude / 2 * freq_multiplier * 2;
+
     unsigned int start_layer_nr = (mesh.settings.get<EPlatformAdhesion>("adhesion_type") == EPlatformAdhesion::BRIM)? 1 : 0; // don't make fuzzy skin on first layer if there's a brim
     for (unsigned int layer_nr = start_layer_nr; layer_nr < mesh.layers.size(); layer_nr++)
     {
@@ -1105,31 +1134,38 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
             Polygons& skin = (mesh.settings.get<ESurfaceMode>("magic_mesh_surface_mode") == ESurfaceMode::SURFACE)? part.outline : part.insets[0];
             for (PolygonRef poly : skin)
             {
-                if (mesh.settings.get<bool>("magic_fuzzy_skin_outside_only") && poly.area() < 0)
+                
+                if (/* mesh.settings.get<bool>("magic_fuzzy_skin_outside_only") && */ poly.area() < 0)
                 {
                     results.add(poly);
                     continue;
                 }
+                
                 // generate points in between p0 and p1
                 PolygonRef result = results.newPoly();
-
-                int64_t dist_left_over = rand() % (min_dist_between_points / 2); // the distance to be traversed on the line before making the first new point
                 Point* p0 = &poly.back();
+
+                Point ideal = snapPointToGrid(p0, freq);
+                int64_t start_offset = layer_nr % 2 * freq + vSize( *p0 - ideal );
+                bool odd = true;
                 for (Point& p1 : poly)
-                { // 'a' is the (next) new point between p0 and p1
+                { // for each line
                     Point p0p1 = p1 - *p0;
                     int64_t p0p1_size = vSize(p0p1);
-                    int64_t dist_last_point = dist_left_over + p0p1_size * 2; // so that p0p1_size - dist_last_point evaulates to dist_left_over - p0p1_size
-                    for (int64_t p0pa_dist = dist_left_over; p0pa_dist < p0p1_size; p0pa_dist += min_dist_between_points + rand() % range_random_point_dist)
-                    {
-                        int r = rand() % (fuzziness * 2) - fuzziness;
+                    int64_t p0pa_dist = start_offset;
+                    for (; p0pa_dist < p0p1_size; p0pa_dist += freq)
+                    {                       
+                        odd = !odd;
+                        int r = odd * amplitude;
                         Point perp_to_p0p1 = turn90CCW(p0p1);
-                        Point fuzz = normal(perp_to_p0p1, r);
-                        Point pa = *p0 + normal(p0p1, p0pa_dist) + fuzz;
+                        Point fuzz = normal(perp_to_p0p1, -r);
+                        Point np = *p0 + normal(p0p1, p0pa_dist);
+                        np = snapPointToGrid(&np, freq/2);
+                        np = getClosestPoint(p0->X, p0->Y, p1.X, p1.Y, np.X, np.Y );
+                        Point pa = np + fuzz;
                         result.add(pa);
-                        dist_last_point = p0pa_dist;
                     }
-                    dist_left_over = p0p1_size - dist_last_point;
+                    start_offset = p0pa_dist - p0p1_size;
 
                     p0 = &p1;
                 }
@@ -1154,6 +1190,4 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
         }
     }
 }
-
-
 }//namespace cura
