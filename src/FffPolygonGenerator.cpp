@@ -1086,10 +1086,10 @@ void FffPolygonGenerator::processPlatformAdhesion(SliceDataStorage& storage)
 
 
 double getAmplitudeAt(Point *p0, unsigned int layer_nr, coord_t scale )
-{
-    const coord_t offset = scale / 2;
-    const Point closest = Point( round( (p0->X + offset) / scale) * scale, round((p0->Y + offset) / scale) * scale );
-    const double a = vSize(*p0- closest) / ((double)scale + 1.4142 );
+{    
+    const double x0 = sin(p0->X / scale / (M_PI * 2));
+    const double y0 = sin(p0->Y / scale / (M_PI * 2));
+    const double a = ( x0 * y0 ) / 2;
     return layer_nr % 2 ? a : -a;
 
 }
@@ -1101,11 +1101,9 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
         return;
     }
 
-    const float freq_multiplier = 2; // TODO: as parameter
-
-    const coord_t amplitude = mesh.settings.get<coord_t>("skin_line_width") / 2;
-    const coord_t freq = amplitude / 2 * freq_multiplier * 2;
-    const coord_t resolution = freq / 8; // TODO: as own parameter
+    const coord_t amplitude = mesh.settings.get<coord_t>("skin_line_width") * .5; // TODO: as parameter;
+    const coord_t scale = 2500; // TODO: as parameter
+    const coord_t resolution = scale / 8; // TODO: as own parameter
 
     unsigned int start_layer_nr = (mesh.settings.get<EPlatformAdhesion>("adhesion_type") == EPlatformAdhesion::BRIM)? 1 : 0; // don't make fuzzy skin on first layer if there's a brim
     for (unsigned int layer_nr = start_layer_nr; layer_nr < mesh.layers.size(); layer_nr++)
@@ -1118,7 +1116,7 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
             for (PolygonRef poly : skin)
             {
                 
-                if (/* mesh.settings.get<bool>("magic_fuzzy_skin_outside_only") && */ poly.area() < 0)
+                if (mesh.settings.get<bool>("magic_fuzzy_skin_outside_only") && poly.area() < 0)
                 {
                     results.add(poly);
                     continue;
@@ -1139,8 +1137,8 @@ void FffPolygonGenerator::processFuzzyWalls(SliceMeshStorage& mesh)
                         Point perp_to_p0p1 = turn90CCW(p0p1);
                         Point np = *p0 + normal(p0p1, p0pa_dist);
                         
-                        int r =  getAmplitudeAt(&np, layer_nr, freq * 2) * amplitude;
-                        Point fuzz = normal(perp_to_p0p1, -r);
+                        int r =  getAmplitudeAt(&np, layer_nr, scale / 100 * 2.5 )  * amplitude;
+                        Point fuzz = normal(perp_to_p0p1, r);
                         Point pa = np + fuzz;
                         result.add(pa);
                     }
